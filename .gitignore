@@ -1,0 +1,39 @@
+# Dependencies
+/vendor/
+
+# Environment
+.env
+.env.*
+!.env.example
+*.env.docker
+
+# Runtime
+*.log
+.phpunit.result.cache
+/.phpunit.cache/
+
+# Build output
+dist/
+build/
+
+# Test coverage
+.coverage
+coverage.xml
+htmlcov/
+
+# Local docs/work notes
+/docs
+docs
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+/.claude
