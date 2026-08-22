@@ -17,6 +17,7 @@ use LibraTrack\Repositories\BookRepository;
 use LibraTrack\Repositories\MemberRepository;
 use LibraTrack\Repositories\ReservationRepository;
 use LibraTrack\Repositories\SettingsRepository;
+use LibraTrack\Services\BorrowingService;
 
 final class ReservationController
 {
@@ -25,6 +26,7 @@ final class ReservationController
         private readonly MemberRepository $members,
         private readonly BookRepository $books,
         private readonly SettingsRepository $settings,
+        private readonly BorrowingService $borrowing,
         private readonly AuthMiddleware $authMiddleware,
         private readonly RoleMiddleware $roleMiddleware
     ) {
@@ -34,6 +36,7 @@ final class ReservationController
     {
         $payload = $this->authMiddleware->authenticate($request);
         $this->roleMiddleware->authorize($payload, ['admin', 'librarian']);
+        $this->expireReadyReservations();
 
         $pagination = Pagination::fromRequest($request);
         $result = $this->reservations->list($pagination);
@@ -77,6 +80,7 @@ final class ReservationController
     public function show(Request $request, array $params): Response
     {
         $this->authMiddleware->authenticate($request);
+        $this->expireReadyReservations();
 
         $reservation = $this->reservations->find((int) $params['id']);
         if ($reservation === null) {
@@ -102,24 +106,80 @@ final class ReservationController
             if ($member === null || (int) $member['id'] !== (int) $reservation['member_id']) {
                 throw new ValidationException('Forbidden', 403);
             }
+            if ($reservation['status'] !== 'PENDING') {
+                throw new ValidationException('Reservation cannot be cancelled');
+            }
         }
 
-        $this->reservations->updateStatus($id, 'CANCELLED');
+        if (!in_array($reservation['status'], ['PENDING', 'READY_FOR_PICKUP'], true)) {
+            throw new ValidationException('Reservation cannot be cancelled');
+        }
+
+        if (!$this->reservations->cancelWithRelease($id)) {
+            throw new ValidationException('Reservation cannot be cancelled');
+        }
+
+        return Response::success($this->toFrontend($this->reservations->find($id)));
+    }
+
+    public function approve(Request $request, array $params): Response
+    {
+        $payload = $this->authMiddleware->authenticate($request);
+        $this->roleMiddleware->authorize($payload, ['admin', 'librarian']);
+        $this->expireReadyReservations();
+
+        $id = (int) $params['id'];
+        $reservation = $this->reservations->find($id);
+        if ($reservation === null) {
+            throw new ValidationException('Reservation not found', 404);
+        }
+        if ($reservation['status'] !== 'PENDING') {
+            throw new ValidationException('Reservation is not pending');
+        }
+
+        $expiryDays = $this->settings->all()['reservationExpiryDays'];
+        $expiresAt = (new DateTimeImmutable())->add(new DateInterval("P{$expiryDays}D"));
+        if (!$this->reservations->approveHold($id, $expiresAt)) {
+            throw new ValidationException('Book is not available for pickup hold');
+        }
 
         return Response::success($this->toFrontend($this->reservations->find($id)));
     }
 
     public function fulfill(Request $request, array $params): Response
     {
+        return $this->issue($request, $params);
+    }
+
+    public function issue(Request $request, array $params): Response
+    {
         $payload = $this->authMiddleware->authenticate($request);
         $this->roleMiddleware->authorize($payload, ['admin', 'librarian']);
+        $this->expireReadyReservations();
 
         $id = (int) $params['id'];
-        if ($this->reservations->find($id) === null) {
+        $reservation = $this->reservations->find($id);
+        if ($reservation === null) {
             throw new ValidationException('Reservation not found', 404);
         }
+        if ($reservation['status'] === 'EXPIRED') {
+            throw new ValidationException('Pickup window has expired for this reservation');
+        }
+        if ($reservation['status'] !== 'READY_FOR_PICKUP') {
+            throw new ValidationException('Reservation is not ready for pickup');
+        }
 
-        $this->reservations->updateStatus($id, 'FULFILLED');
+        $issued = $this->reservations->issueReadyForPickup(
+            $id,
+            fn (array $lockedReservation): int => $this->borrowing->issue(
+                (int) $lockedReservation['member_id'],
+                [(int) $lockedReservation['book_id']],
+                true
+            )
+        );
+        if (!$issued) {
+            throw new ValidationException('Reservation is not ready for pickup');
+        }
 
         return Response::success($this->toFrontend($this->reservations->find($id)));
     }
@@ -137,9 +197,15 @@ final class ReservationController
             throw new ValidationException('Forbidden', 403);
         }
 
+        $this->expireReadyReservations();
         $rows = $this->reservations->findByMember($memberId, $request->query['status'] ?? null);
 
         return Response::success(array_map($this->toFrontend(...), $rows));
+    }
+
+    private function expireReadyReservations(): void
+    {
+        $this->reservations->expireReadyForPickup(new DateTimeImmutable());
     }
 
     private function toFrontend(array $row): array

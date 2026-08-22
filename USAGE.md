@@ -362,24 +362,35 @@ curl -X POST http://localhost:8000/api/reservations/ \
 
 ### List reservations
 
-Supports `status` (`PENDING`, `FULFILLED`, `CANCELLED`, `EXPIRED`), `page`, `limit`.
+Supports `page` and `limit`.
 
 ```bash
-curl "http://localhost:8000/api/reservations/?status=PENDING" \
+curl "http://localhost:8000/api/reservations/" \
   -H "Authorization: Bearer <TOKEN>"
 ```
 
-### Approve a reservation
+### Approve a reservation hold
 
 ```bash
-curl -X PATCH http://localhost:8000/api/reservations/5/fulfill/ \
+curl -X PATCH http://localhost:8000/api/reservations/5/approve/ \
   -H "Authorization: Bearer <TOKEN>"
 ```
+
+This changes the reservation to `READY_FOR_PICKUP`, holds one copy, and sets the pickup deadline from `reservationExpiryDays`.
+
+### Issue a reserved book at pickup
+
+```bash
+curl -X PATCH http://localhost:8000/api/reservations/5/issue/ \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
+This creates the borrow transaction and changes the reservation to `BORROWED`.
 
 ### Cancel / decline a reservation
 
 ```bash
-curl -X POST http://localhost:8000/api/reservations/5/cancel/ \
+curl -X PATCH http://localhost:8000/api/reservations/5/cancel/ \
   -H "Authorization: Bearer <TOKEN>"
 ```
 
@@ -487,22 +498,3 @@ All errors follow the same shape:
 | 404 | Resource not found |
 | 500 | Server error |
 
----
-
-## Running Tests
-
-```bash
-vendor/bin/phpunit
-```
-
-Run a specific test file:
-
-```bash
-vendor/bin/phpunit tests/Feature/AuthEndpointTest.php
-```
-
-Run a specific test method:
-
-```bash
-vendor/bin/phpunit --filter testLoginRouteReturnsFrontendEnvelopeShape
-```
