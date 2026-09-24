@@ -1,6 +1,6 @@
 # SomaHub - Backend (PHP)
 
-**Author:** Calvin Shawn
+**Author:** Annette Wambui
 **Date:** 2026-09-24
 
 SomaHub Backend is a plain PHP REST API for a library management platform. It
